@@ -9,6 +9,7 @@ from elasticsearch import Elasticsearch
 from pyhocon import ConfigFactory
 
 from databuilder.extractor.glue_extractor import GlueExtractor
+from databuilder.extractor.glue_last_updated_extractor import GlueLastUpdatedExtractor
 from databuilder.extractor.neo4j_extractor import Neo4jExtractor
 from databuilder.extractor.neo4j_search_data_extractor import Neo4jSearchDataExtractor
 from databuilder.job.job import DefaultJob
@@ -29,6 +30,12 @@ GLUE_CLUSTER_KEY = 'test_cluster_key'
 es = Elasticsearch([{'host': '127.0.0.1'}, ])
 
 
+FILTER_GLUE = [ {
+                'Key': 'Location',
+                'Value': 's3://mmlake-presentation-zone',
+            }]
+
+
 def create_glue_extractor_job():
     tmp_folder = '/var/tmp/amundsen/table_metadata'
     node_files_folder = Path(tmp_folder, 'nodes')
@@ -36,7 +43,7 @@ def create_glue_extractor_job():
 
     job_config = ConfigFactory.from_dict({
         f'extractor.glue.{GlueExtractor.CLUSTER_KEY}': GLUE_CLUSTER_KEY,
-        f'extractor.glue.{GlueExtractor.FILTER_KEY}': [],
+        f'extractor.glue.{GlueExtractor.FILTER_KEY}': FILTER_GLUE,
         f'loader.filesystem_csv_neo4j.{FsNeo4jCSVLoader.NODE_DIR_PATH}': node_files_folder,
         f'loader.filesystem_csv_neo4j.{FsNeo4jCSVLoader.RELATION_DIR_PATH}': relationship_files_folder,
         f'publisher.neo4j.{neo4j_csv_publisher.NODE_FILES_DIR}': node_files_folder,
@@ -54,6 +61,32 @@ def create_glue_extractor_job():
                           transformer=NoopTransformer()),
                       publisher=Neo4jCsvPublisher())
 
+
+
+def create_glue_last_updated_extractor_job():
+    tmp_folder = '/var/tmp/amundsen/table_last_updated_metadata'
+    node_files_folder = Path(tmp_folder, 'nodes')
+    relationship_files_folder = Path(tmp_folder, 'relationships')
+
+    job_config = ConfigFactory.from_dict({
+        f'extractor.glue.{GlueLastUpdatedExtractor.CLUSTER_KEY}': GLUE_CLUSTER_KEY,
+        f'extractor.glue.{GlueLastUpdatedExtractor.FILTER_KEY}': FILTER_GLUE,
+        f'loader.filesystem_csv_neo4j.{FsNeo4jCSVLoader.NODE_DIR_PATH}': node_files_folder,
+        f'loader.filesystem_csv_neo4j.{FsNeo4jCSVLoader.RELATION_DIR_PATH}': relationship_files_folder,
+        f'publisher.neo4j.{neo4j_csv_publisher.NODE_FILES_DIR}': node_files_folder,
+        f'publisher.neo4j.{neo4j_csv_publisher.RELATION_FILES_DIR}': relationship_files_folder,
+        f'publisher.neo4j.{neo4j_csv_publisher.NEO4J_END_POINT_KEY}': NEO4J_ENDPOINT,
+        f'publisher.neo4j.{neo4j_csv_publisher.NEO4J_USER}': NEO4j_USERNAME,
+        f'publisher.neo4j.{neo4j_csv_publisher.NEO4J_PASSWORD}': NEO4j_PASSWORD,
+        f'publisher.neo4j.{neo4j_csv_publisher.JOB_PUBLISH_TAG}': str(int(datetime.utcnow().timestamp()))
+    })
+
+    return DefaultJob(conf=job_config,
+                      task=DefaultTask(
+                          extractor=GlueLastUpdatedExtractor(),
+                          loader=FsNeo4jCSVLoader(),
+                          transformer=NoopTransformer()),
+                      publisher=Neo4jCsvPublisher())
 
 def create_es_publisher_job():
     # loader saves data to this location and publisher reads it from here
@@ -104,8 +137,14 @@ def create_es_publisher_job():
 
 
 if __name__ == "__main__":
+    print('Start Glue Job')
     glue_job = create_glue_extractor_job()
     glue_job.launch()
 
+    print('Start Glue Last Update Job')
+    glue_last_updated_job = create_glue_last_updated_extractor_job()
+    glue_last_updated_job.launch()
+
+    print('Start ES')
     es_job = create_es_publisher_job()
     es_job.launch()
